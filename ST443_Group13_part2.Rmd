@@ -33,30 +33,6 @@ To possibly obtain a higher mark, you can also try other simulation settings (e.
 4. Summary and findings
 
 ```{r, echo=FALSE}
-lasso_coordinate_descent <- function(X, y, lambda, max_iter = 1000, tol = 1e-6) {
-  n <- nrow(X)
-  p <- ncol(X)
-  beta <- rep(0, p)
-  
-  for (iter in 1:max_iter) {
-    beta_old <- beta
-    
-    for (j in 1:p) {
-      # (a) Compute the partial residuals rij
-      r <- y - X %*% beta + X[, j] * beta[j]
-      # (b) Compute the simple least squares coefficient of these residuals on the j-th predictor
-      beta_star_j <- sum(X[, j] * r) / n
-      # (c) Update beta_j by soft thresholding
-      beta[j] <- sign(beta_star_j) * max(0, abs(beta_star_j) - lambda)
-    }
-    
-    if (max(abs(beta - beta_old)) < tol) {
-      break
-    }
-  }
-  
-  return(beta)
-}
 
 
 # Function to simulate data
