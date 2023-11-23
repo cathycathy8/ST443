@@ -11,6 +11,38 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 1. Algorithm 1 Coordinate Descent Algorithm for Solving the Lasso
+
+# Question 1: Write the R code to implement the “one-at-a-time” coordinate descent algorithm
+lasso_coordinate_descent <- function(X, y, lambda, max_iterations = 1000, tolerance = 1e-6) {
+  n <- nrow(X)
+  p <- ncol(X)
+  beta <- rep(0, p)
+  converged <- FALSE
+  
+  for (iter in 1:max_iterations) {
+    beta_prev <- beta
+    
+    for (j in 1:p) {
+      # Compute the current residual excluding the j-th predictor
+      r_j <- y - X %*% beta + X[, j] * beta[j]
+      
+      # Compute the coordinate update using the soft-thresholding function
+      beta[j] <- sign(sum(X[, j] * r_j)) * max(0, abs(sum(X[, j] * r_j)) - lambda) / sum(X[, j]^2)
+    }
+    
+    # Check for convergence
+    if (max(abs(beta - beta_prev)) < tolerance) {
+      converged <- TRUE
+      break
+    }
+  }
+  
+  if (!converged) {
+    warning("Coordinate descent did not converge within the specified iterations.")
+  }
+  
+  return(beta)
+}
 <!--lasso limitation in three scenarios-->
 ```{r, echo=FALSE}
 
