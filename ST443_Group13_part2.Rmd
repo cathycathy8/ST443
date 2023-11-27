@@ -11,16 +11,84 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 1. Algorithm 1 Coordinate Descent Algorithm for Solving the Lasso
+
+# Question 1: Write the R code to implement the “one-at-a-time” coordinate descent algorithm
+lasso_coordinate_descent <- function(X, y, lambda, max_iterations = 1000, tolerance = 1e-6) {
+  n <- nrow(X)
+  p <- ncol(X)
+  beta <- rep(0, p)
+  converged <- FALSE
+  
+  for (iter in 1:max_iterations) {
+    beta_prev <- beta
+    
+    for (j in 1:p) {
+      # Compute the current residual excluding the j-th predictor
+      r_j <- y - X %*% beta + X[, j] * beta[j]
+      
+      # Compute the coordinate update using the soft-thresholding function
+      beta[j] <- sign(sum(X[, j] * r_j)) * max(0, abs(sum(X[, j] * r_j)) - lambda) / sum(X[, j]^2)
+    }
+    
+    # Check for convergence
+    if (max(abs(beta - beta_prev)) < tolerance) {
+      converged <- TRUE
+      break
+    }
+  }
+  
+  if (!converged) {
+    warning("Coordinate descent did not converge within the specified iterations.")
+  }
+  
+  return(beta)
+}
 <!--lasso limitation in three scenarios-->
 ```{r, echo=FALSE}
 
 ```
 
 2.Coordinate Descent Algorithm for Solving the Elastic net with regularization
-<!--selection of regularization parameters-->
-```{r, echo=FALSE}
 
-```
+<!--selection of regularization parameters-->
+
+# Question 2: Write the R code to develop coordinate descent algorithm to solve the elastic net
+elastic_net_coordinate_descent <- function(X, y, lambda1, lambda2, max_iterations = 1000, tolerance = 1e-6) {
+  n <- nrow(X)
+  p <- ncol(X)
+  beta <- rep(0, p)
+  converged <- FALSE
+  
+  for (iter in 1:max_iterations) {
+    beta_prev <- beta
+    
+    for (j in 1:p) {
+      r_j <- y - X %*% beta + X[, j] * beta[j]
+      rho <- crossprod(X[, j], r_j)
+      beta[j] <- rho / (sum(X[, j]^2) + lambda2 * n)  # Ridge update
+      
+      beta_without_j <- beta[-j]
+      r_without_j <- y - X[, -j] %*% beta_without_j
+      z_j <- crossprod(X[, j], r_without_j)
+      
+      beta[j] <- sign(z_j) * max(0, abs(z_j) - lambda1) / (sum(X[, j]^2) + lambda2 * n)  # Lasso update
+    }
+    
+    # Check for convergence
+    if (max(abs(beta - beta_prev)) < tolerance) {
+      converged <- TRUE
+      break
+    }
+  }
+  
+  if (!converged) {
+    warning("Coordinate descent did not converge within the specified iterations.")
+  }
+  
+  return(beta)
+}
+
+ 
 
 3.Data simulation and numerical results
 <!--The simulation is to show that the elastic net not only dominates the lasso in terms of prediction accuracy, but also do a good job in variable selection
