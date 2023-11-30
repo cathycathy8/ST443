@@ -14,11 +14,55 @@ knitr::opts_chunk$set(echo = TRUE)
 <!--lasso limitation in three scenarios-->
 ```{r, echo=FALSE}
 
+coordinate_descent <- function(y, X, l1, l2=0, max_iterations=100, tolerance=1e-6){
+  
+  p <- ncol(X)
+  converged <- FALSE
+  
+  # intialise the beta_j at 0
+  beta <- rep(0,p)
+  
+  for (i in 1:max_iterations) {
+    
+    # used to check convergence later
+    beta_prev <- beta
+    
+    for (j in 1:p){
+      
+      # get partial residuals
+      resid <- y - (X[,-j] %*% beta[-j])
+      
+      # least squares coefficient on residual
+      beta_star_j <- mean(X[,j] * resid)
+      
+      # soft thresholding: if provide L2 use elastic net, else lasso
+
+      coeff <- 1 / (1 + (2 * l2))
+      beta_j <- coeff * sign(beta_star_j) * max(abs(beta_star_j) - l1, 0)
+    
+      # store fitted beta_j
+      beta[j] <- beta_j
+      
+    }
+    
+    # Check for convergence - stops further loops if not necessary
+    if (max(abs(beta - beta_prev)) < tolerance) {
+      converged <- TRUE
+      break
+    }    
+  }
+
+  return(beta)
+  
+}
+
 ```
 
 2.Coordinate Descent Algorithm for Solving the Elastic net with regularization
 <!--selection of regularization parameters-->
 ```{r, echo=FALSE}
+
+# same as above
 
 ```
 
@@ -51,5 +95,235 @@ simulate_data <- function(n, p, sigma, beta_true, correlation_matrix) {
   
   return(list(X = X, y = y))
 }
+
 ```
+
+
+
+```{r, echo=FALSE}
+
+# I took a different approach to the data generation. I first make the 
+# covariance / correlation matrix as described in the project instruction. Then
+# I simulate 50 data sets with the said covariance matrix and mu = 0.
+
+covariance_matrix <- function(p) {
+
+  off_diagonals <- c()
+  
+  # Generate correlations of order 0.5^x
+  
+  for (i in 1:(p-1)) {
+    
+    off_diagonals <- append(off_diagonals, (0.5^seq(1,p-i,1)))
+    
+  }
+  
+  cov_matrix <- matrix(rep(1,p*p), nrow=p)
+  cov_matrix[lower.tri(cov_matrix)] <- off_diagonals
+  cov_matrix <- t(cov_matrix)
+  cov_matrix[lower.tri(cov_matrix)] <- off_diagonals
+  
+  return(cov_matrix)
+  
+}
+
+
+library(MASS)
+
+simulate_data <- function(n, N, beta, Sigma, sigma){
+  
+  set.seed(123)
+  
+  data <- list()
+  
+  for (i in 1:N) {
+    
+    X <- mvrnorm(
+      n = n,
+      mu = rep(0, length(beta)),
+      Sigma = Sigma
+    )
+    
+    epsilon = sigma * rnorm(n, mean = 0, sd = 1)
+    
+    y = X%*%betas + epsilon
+    
+    data[[i]] <- list(y, X)
+    
+  }
+
+  return(data)
+  
+}
+
+
+# After simulating data I used the following function to loop through each one 
+# of the 50 data sets and run the coordinate descent for each given lambda 1/2.
+# This gives the min MSE and corresponding fit for each simulated data set.
+
+simple_fit <- function(data, L1, L2=c(0), split) {
+  
+  y <- data[[1]]
+  X <- data[[2]]
+  
+  y_train <- y[split[[1]]]
+  X_train <- X[split[[1]],]
+  
+  y_valid <- y[split[[2]]]
+  X_valid <- X[split[[2]],]
+  
+  mses <- array(dim=c(length(L1), length(L2)))
+  
+  fits <- array(dim=c(ncol(X), length(L1), length(L2)))
+  
+  # for each l1 and l2 run the CD and get fit + MSE
+  for (i in 1:length(L1)){
+    for (j in 1:length(L2)) {
+      
+      fits[,i,j] <- coordinate_descent(y_train, X_train, L1[i], L2[j])
+      
+      error <- y_valid - (X_valid %*% fits[,i,j])
+      
+      mses[i,j] <- mean(error ** 2) 
+      
+    }
+  }
+
+  min_mse <- min(mses)
+  min_ind <- which(mses == min(mses), arr.ind = TRUE)[1,]
+  
+  fit <- fits[,min_ind[1],min_ind[2]]
+  
+  l1 <- L1[min_ind[1]]
+  l2 <- L2[min_ind[2]]
+  
+  return(list(
+    'mses'=mses, 'mse'=min_mse, 'fits'=fits, 'fit'=fit ,'L1'=L1, 'L2'=L2,
+    'l1'=l1, 'l2'=l2
+    ))
+  
+}
+
+# Small function to test performance in the test set 
+
+test_performance <- function(data, fit, split) {
+  
+  y_test <- data[[1]][split[[3]]]
+  X_test <- data[[2]][split[[3]],]
+  
+  error <- y_test - (X_test %*% fit)
+  mse <- mean(error ** 2)
+  
+  return(list('mse' = mse, 'fit' = fit))
+}
+
+
+# Hacky function to show number of coefficients for each of lasso/en and mse
+
+quick_summary <- function(p, N, fits, mses){
+  
+  count <- rep(0,p)
+  total_count <- 0
+  
+  for (fit in fits) {
+    
+    total_count <- total_count + sum(fit != 0)
+    
+    for (i in 1:length(fit)){
+      
+      if (fit[i] != 0){
+            count[i] <- count[i] + 1
+      }
+      
+    }
+  
+  }
+  
+  print('% Non zero coefficients')
+  print(count / N)
+  print('Mean number of coefficients')
+  print(total_count / N)
+  print('Mean MSE')
+  print(mean(mses))
+    
+}
+
+```
+
+
+
+Example for simulated setting in project instruction
+
+Generate Data - Scenario 1
+
+```{r}
+
+Sigma <- covariance_matrix(8)
+
+betas <- c(3,1.5,0,0,2,0,0,0)
+
+sim_data <- simulate_data(240, 50, betas, Sigma, 3)
+
+
+```
+
+
+Lasso Fit
+
+```{r}
+
+L1 <- seq(0,10,0.1)
+
+split = list(1:20, 21:40, 41:240)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- simple_fit(sim_data[[i]], L1, split=split)
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+```
+
+EN fit
+
+```{r}
+
+L1 <- seq(0,10,0.1)
+L2 <- seq(0,1,0.1)
+
+split = list(1:20, 21:40, 41:240)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- simple_fit(sim_data[[i]], L1, L2, split=split)
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+```
+
+Summary
+
+```{r}
+print('Lasso')
+quick_summary(8,50,lasso_fits,lasso_performance)
+
+print('Elastic Net')
+quick_summary(8,50,en_fits,en_performance)
+```
+
+
+
+
 
