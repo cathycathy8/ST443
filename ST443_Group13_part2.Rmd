@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 <!--lasso limitation in three scenarios-->
 ```{r, echo=FALSE}
 
-coordinate_descent <- function(y, X, l1, l2=0, max_iterations=100, tolerance=1e-6){
+lasso_coordinate_descent <- function(y, X, lambda, max_iterations=100, tolerance=1e-6){
   
   p <- ncol(X)
   converged <- FALSE
@@ -35,10 +35,8 @@ coordinate_descent <- function(y, X, l1, l2=0, max_iterations=100, tolerance=1e-
       # least squares coefficient on residual
       beta_star_j <- mean(X[,j] * resid)
       
-      # soft thresholding: if provide L2 use elastic net, else lasso
-
-      coeff <- 1 / (1 + (2 * l2))
-      beta_j <- coeff * sign(beta_star_j) * max(abs(beta_star_j) - l1, 0)
+      # soft thresholding
+      beta_j <- sign(beta_star_j) * max(abs(beta_star_j) - lambda, 0)
     
       # store fitted beta_j
       beta[j] <- beta_j
@@ -58,11 +56,56 @@ coordinate_descent <- function(y, X, l1, l2=0, max_iterations=100, tolerance=1e-
 
 ```
 
+
 2.Coordinate Descent Algorithm for Solving the Elastic net with regularization
 <!--selection of regularization parameters-->
 ```{r, echo=FALSE}
 
-# same as above
+# same as above but now with Lambda1 & Lambda 2
+
+
+en_coordinate_descent <- function(y, X, lambda1=0, lambda2, max_iterations=100, tolerance=1e-6){
+  
+  p <- ncol(X)
+  converged <- FALSE
+  
+  # intialise the beta_j at 0
+  beta <- rep(0,p)
+  
+  for (i in 1:max_iterations) {
+    
+    # used to check convergence later
+    beta_prev <- beta
+    
+    for (j in 1:p){
+      
+      # get partial residuals
+      resid <- y - (X[,-j] %*% beta[-j])
+      
+      # least squares coefficient on residual
+      beta_star_j <- mean(X[,j] * resid)
+      
+      # soft thresholding: if provide lambda1 use elastic net, else Lasso
+
+      coeff <- 1 / (1 + (2 * lambda1))
+      beta_j <- coeff * sign(beta_star_j) * max(abs(beta_star_j) - lambda2, 0)
+    
+      # store fitted beta_j
+      beta[j] <- beta_j
+      
+    }
+    
+    # Check for convergence - stops further loops if not necessary
+    if (max(abs(beta - beta_prev)) < tolerance) {
+      converged <- TRUE
+      break
+    }    
+  }
+
+  return(beta)
+  
+}
+
 
 ```
 
@@ -70,63 +113,48 @@ coordinate_descent <- function(y, X, l1, l2=0, max_iterations=100, tolerance=1e-
 <!--The simulation is to show that the elastic net not only dominates the lasso in terms of prediction accuracy, but also do a good job in variable selection
 
 To possibly obtain a higher mark, you can also try other simulation settings (e.g.different values of n, p, σ, sparsity level of β and etc.) to demonstrate the superiority of elastic net over the lasso in many scenarios.-->
-```{r, echo=FALSE}
 
-```
+(Krystian)
 
-4. Summary and findings
+First part is code to simulate data. correlation_matrix returns the matrix
+form specified in project instruction. 
 
-```{r, echo=FALSE}
+```{r correlation matrix, echo=FALSE}
 
-
-# Function to simulate data
-simulate_data <- function(n, p, sigma, beta_true, correlation_matrix) {
-  set.seed(123)
-  X <- matrix(rnorm(n * p), nrow = n)
-  X <- scale(X)
-  
-  # Generate correlated predictors
-  for (j in 2:p) {
-    X[, j] <- X[, j] + correlation_matrix[1:(j-1), j] %*% X[, 1:(j-1)]
-  }
-  
-  epsilon <- rnorm(n, mean = 0, sd = sigma)
-  y <- X %*% beta_true + epsilon
-  
-  return(list(X = X, y = y))
-}
-
-```
-
-
-
-```{r, echo=FALSE}
-
-# I took a different approach to the data generation. I first make the 
-# covariance / correlation matrix as described in the project instruction. Then
-# I simulate 50 data sets with the said covariance matrix and mu = 0.
-
-covariance_matrix <- function(p) {
+correlation_matrix <- function(p, coeff=0.5) {
 
   off_diagonals <- c()
   
-  # Generate correlations of order 0.5^x
+  # Generate correlations of order coeff^x
   
   for (i in 1:(p-1)) {
     
-    off_diagonals <- append(off_diagonals, (0.5^seq(1,p-i,1)))
+    off_diagonals <- append(off_diagonals, (coeff^seq(1,p-i,1)))
     
   }
   
-  cov_matrix <- matrix(rep(1,p*p), nrow=p)
-  cov_matrix[lower.tri(cov_matrix)] <- off_diagonals
-  cov_matrix <- t(cov_matrix)
-  cov_matrix[lower.tri(cov_matrix)] <- off_diagonals
+  cor_matrix <- matrix(rep(1,p*p), nrow=p)
+  cor_matrix[lower.tri(cor_matrix)] <- off_diagonals
+  cor_matrix <- t(cor_matrix)
+  cor_matrix[lower.tri(cor_matrix)] <- off_diagonals
   
-  return(cov_matrix)
+  return(cor_matrix)
   
 }
 
+```
+
+Example to run below:
+
+```{r example matrix, echo=FALSE}
+correlation_matrix(8)
+```
+
+The simulate_data function generates N simulated data sets with regressors
+correlated according to the correlation matrix provided (Sigma). The returned 
+output is a list of N lists of (y, X)
+
+```{r simulate data, echo=FALSE}
 
 library(MASS)
 
@@ -146,7 +174,7 @@ simulate_data <- function(n, N, beta, Sigma, sigma){
     
     epsilon = sigma * rnorm(n, mean = 0, sd = 1)
     
-    y = X%*%betas + epsilon
+    y = X%*%beta + epsilon
     
     data[[i]] <- list(y, X)
     
@@ -156,12 +184,25 @@ simulate_data <- function(n, N, beta, Sigma, sigma){
   
 }
 
+```
 
-# After simulating data I used the following function to loop through each one 
-# of the 50 data sets and run the coordinate descent for each given lambda 1/2.
-# This gives the min MSE and corresponding fit for each simulated data set.
 
-simple_fit <- function(data, L1, L2=c(0), split) {
+Example to run below (indexing first data set otherwise output is very long):
+
+```{r example data, echo=FALSE}
+
+simulate_data(240, 50, c(3,1.5,0,0,2,0,0,0), correlation_matrix(8), 3)[[1]]
+
+```
+
+After simulating data I used the following function to loop through each one 
+of the 50 data sets and run the coordinate descent for each given lambda 1/2.
+This gives the min MSE, AIC & BIC and corresponding fit for each simulated data 
+set. Defaults to using MSE.
+
+```{r}
+
+best_fit <- function(data, Lambda1=c(0), Lambda2, split, method='mse') {
   
   y <- data[[1]]
   X <- data[[2]]
@@ -172,37 +213,88 @@ simple_fit <- function(data, L1, L2=c(0), split) {
   y_valid <- y[split[[2]]]
   X_valid <- X[split[[2]],]
   
-  mses <- array(dim=c(length(L1), length(L2)))
+  n <- nrow(X_valid)
   
-  fits <- array(dim=c(ncol(X), length(L1), length(L2)))
+  # containers for fit metrics
+  mses <- array(dim=c(length(Lambda1), length(Lambda2)))
+  aic <- array(dim=c(length(Lambda1), length(Lambda2)))
+  bic <- array(dim=c(length(Lambda1), length(Lambda2)))
   
-  # for each l1 and l2 run the CD and get fit + MSE
-  for (i in 1:length(L1)){
-    for (j in 1:length(L2)) {
+  # container for all of the fits for each lambda 1,2 combination
+  fits <- array(dim=c(ncol(X), length(Lambda1), length(Lambda2)))
+  
+  # for each lambda1 and lambda2 run the CD and get fit + MSE, AIC, BIC, RSS
+  for (i in 1:length(Lambda1)){
+    for (j in 1:length(Lambda2)) {
       
-      fits[,i,j] <- coordinate_descent(y_train, X_train, L1[i], L2[j])
+      fits[,i,j] <- en_coordinate_descent(
+        y_train, X_train, Lambda1[i], Lambda2[j]
+        )
+      
+      # non zero coefficients
+      p <- sum(fits[,i,j] != 0)
       
       error <- y_valid - (X_valid %*% fits[,i,j])
       
       mses[i,j] <- mean(error ** 2) 
       
+      log_likelihood <- log(2*pi) + 1 + log(sum(error ** 2) / n)
+      
+      aic[i,j] <- n * log_likelihood + (p + 1) * 2
+      bic[i,j] <- n * log_likelihood + p * log(n)
     }
   }
-
+  
   min_mse <- min(mses)
-  min_ind <- which(mses == min(mses), arr.ind = TRUE)[1,]
+  min_aic <- min(aic)
+  min_bic <- min(bic)
+  
+  # depending on method provided, pick best fit
+  if (method == 'mse'){
+    min_ind <- which(mses == min(mses), arr.ind = TRUE)[1,]
+  }
+  
+  if (method == 'aic'){
+    min_ind <- which(aic == min(aic), arr.ind = TRUE)[1,]
+  }
+  
+  if (method == 'bic'){
+    min_ind <- which(bic == min(bic), arr.ind = TRUE)[1,]
+  }
   
   fit <- fits[,min_ind[1],min_ind[2]]
   
-  l1 <- L1[min_ind[1]]
-  l2 <- L2[min_ind[2]]
+  # find which lambdas gave the best fit
+  lambda1 <- Lambda1[min_ind[1]]
+  lambda2 <- Lambda2[min_ind[2]]
   
   return(list(
-    'mses'=mses, 'mse'=min_mse, 'fits'=fits, 'fit'=fit ,'L1'=L1, 'L2'=L2,
-    'l1'=l1, 'l2'=l2
+    'mses'=mses, 'mse'=min_mse, 'fits'=fits, 'fit'=fit ,'Lambda1'=Lambda1, 
+    'Lambda2'=Lambda2,'lambda1'=lambda1, 'lambda2'=lambda2, 'aic'= aic, 
+    'min_aic'=min_aic, 'bic'=bic, 'min_bic'=min_bic
     ))
   
 }
+
+
+```
+
+Example for 1 data set:
+
+```{r}
+
+sim_data <- simulate_data(240, 50, c(3,1.5,0,0,2,0,0,0), correlation_matrix(8), 3)[[1]]
+split = list(1:20, 21:40, 41:240)
+
+
+best_fit(sim_data, Lambda1 = seq(0,5,0.1), 
+         Lambda2 = seq(0,5,0.1), split=split, method='mse')
+
+```
+
+Below functions summarise the fitted model.
+
+```{r test performance}
 
 # Small function to test performance in the test set 
 
@@ -218,9 +310,9 @@ test_performance <- function(data, fit, split) {
 }
 
 
-# Hacky function to show number of coefficients for each of lasso/en and mse
+# Summary measures for lasso and en
 
-quick_summary <- function(p, N, fits, mses){
+summary_stats <- function(p, N, fits, mses){
   
   count <- rep(0,p)
   total_count <- 0
@@ -239,26 +331,48 @@ quick_summary <- function(p, N, fits, mses){
   
   }
   
-  print('% Non zero coefficients')
-  print(count / N)
-  print('Mean number of coefficients')
-  print(total_count / N)
-  print('Mean MSE')
-  print(mean(mses))
-    
+  return(list('non_zero'=count/N, 'mean_p'=total_count/N, 'mse'=mean(mses), 
+              'se'=sd(mses)/sqrt(N)))
+
 }
 
 ```
 
 
 
-Example for simulated setting in project instruction
+4. Summary and findings
 
-Generate Data - Scenario 1
+(Krystian)
+
+Things to comment on:
+
+- en should always be at least as good as lasso since the en algorithm can 
+always choose lasso solution by setting lambda1 as 0. this is also seen in the 
+data
+- validation using MSE seems to perform better than AIC and BIC on average. AIC
+and BIC penalise extra regressors quite heavily
+- AIC and BIC code is taken from here:https://stats.stackexchange.com/questions/87345/calculating-aic-by-hand-in-r
+derivation is in the answer to the q
+- Coordinate descent does not always converge (specifcally for Lasso). This seems
+to be an issue with low n_train but improves when its higher e.g. 50. Essentially
+performs poorly with low n
+
+
+
+Scenarios to look at:
+- Instruction scenario
+- from paper Crystal found 
+- Maybe different correlation matrix with highly correlated regressors 
+- Different little sigma e.g. 10 instead of 3
+- Larger n?
+
+
+
+Scenario 1 (Group Project)
 
 ```{r}
 
-Sigma <- covariance_matrix(8)
+Sigma <- correlation_matrix(8)
 
 betas <- c(3,1.5,0,0,2,0,0,0)
 
@@ -268,11 +382,11 @@ sim_data <- simulate_data(240, 50, betas, Sigma, 3)
 ```
 
 
-Lasso Fit
+Lasso Fit - AIC
 
 ```{r}
 
-L1 <- seq(0,10,0.1)
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
 
 split = list(1:20, 21:40, 41:240)
 
@@ -281,21 +395,50 @@ lasso_performance <- c()
 
 for (i in 1:length(sim_data)){
   
-  fit <- simple_fit(sim_data[[i]], L1, split=split)
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split, method='aic')
   
   lasso_fits[[i]] <- fit$fit
   lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
 
 }
 
+summary_stats(8,50,lasso_fits,lasso_performance)
+
 ```
 
-EN fit
+Lasso Fit - MSE
 
 ```{r}
 
-L1 <- seq(0,10,0.1)
-L2 <- seq(0,1,0.1)
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split, method='mse')
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,lasso_fits,lasso_performance)
+
+```
+
+
+
+
+EN fit - AIC (FYI this might take a while to load)
+
+```{r}
+
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
 
 split = list(1:20, 21:40, 41:240)
 
@@ -304,26 +447,297 @@ en_performance <- c()
 
 for (i in 1:length(sim_data)){
   
-  fit <- simple_fit(sim_data[[i]], L1, L2, split=split)
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split, method='aic')
   
   en_fits[[i]] <- fit$fit
   en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
 
 }
 
+summary_stats(8,50,en_fits,en_performance)
+
 ```
 
-Summary
+EN fit - mse
 
 ```{r}
-print('Lasso')
-quick_summary(8,50,lasso_fits,lasso_performance)
 
-print('Elastic Net')
-quick_summary(8,50,en_fits,en_performance)
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split, method='mse')
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,en_fits,en_performance)
+
 ```
 
 
+
+Try with higher train and valid set:
+
+
+```{r}
+
+Sigma <- correlation_matrix(8)
+
+betas <- c(3,1.5,0,0,2,0,0,0)
+
+sim_data <- simulate_data(400, 50, betas, Sigma, 3)
+
+
+```
+
+
+Lasso fit - AIC
+
+```{r}
+
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:100, 101:200, 201:400)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split, method='aic')
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,lasso_fits,lasso_performance)
+
+```
+
+Lasso fit - MSE
+
+```{r}
+
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:100, 101:200, 201:400)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split, method='mse')
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,lasso_fits,lasso_performance)
+
+```
+
+
+
+
+EN fit - AIC 
+
+```{r}
+
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:100, 101:200, 201:400)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split, method='aic')
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,en_fits,en_performance)
+
+```
+
+EN fit - mse
+
+```{r}
+
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:100, 101:200, 201:400)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split, method='mse')
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,en_fits,en_performance)
+
+```
+
+
+
+
+
+
+Scenario 2
+
+
+```{r}
+
+Sigma <- correlation_matrix(8)
+
+betas <- rep(1.5, 8)
+
+sim_data <- simulate_data(240, 50, betas, Sigma, 3)
+
+
+```
+
+
+Lasso 
+
+```{r}
+
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split)
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,lasso_fits,lasso_performance)
+
+
+```
+
+EN
+
+```{r}
+
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split)
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,en_fits,en_performance)
+
+```
+
+
+
+
+
+Scenario 3 - Highly correlated regressors
+
+```{r}
+
+Sigma <- correlation_matrix(8, 0.99)
+
+betas <- c(3,1.5,0,0,2,0,0,0)
+
+sim_data <- simulate_data(240, 50, betas, Sigma, 3)
+
+
+```
+
+
+Lasso 
+
+```{r}
+
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+lasso_fits <- list()
+lasso_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda2=Lambda2, split=split)
+  
+  lasso_fits[[i]] <- fit$fit
+  lasso_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,lasso_fits,lasso_performance)
+
+
+```
+
+EN
+
+```{r}
+
+Lambda1 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+Lambda2 <- exp(seq(log10(100), log10(5 * 1e-5), length.out = 20))
+
+split = list(1:20, 21:40, 41:240)
+
+en_fits <- list()
+en_performance <- c()
+
+for (i in 1:length(sim_data)){
+  
+  fit <- best_fit(sim_data[[i]], Lambda1, Lambda2, split=split)
+  
+  en_fits[[i]] <- fit$fit
+  en_performance[i] <- test_performance(sim_data[[i]], fit$fit, split)$mse
+
+}
+
+summary_stats(8,50,en_fits,en_performance)
+
+```
 
 
 
